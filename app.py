@@ -54,7 +54,7 @@ def about():
 @app.route("/health")
 def health():
     """Endpoint pemeriksa status aplikasi."""
-    return "ERROR"
+    return "OK"
 
 
 if __name__ == "__main__":
