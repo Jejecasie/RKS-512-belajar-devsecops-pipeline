@@ -49,11 +49,55 @@ jobs:
               run: pylint --fail-under=9.0 app.py
 
     # ==========================================
-    # CD STAGE: Deploy ke VM
+    # CI JOB 3: SCA - cek library rentan/usang (pip-audit)
+    # ==========================================
+    sca-scan:
+        name: SCA Dependency Scan
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.10"
+
+            - name: Install pip-audit
+              run: python -m pip install --upgrade pip pip-audit
+
+            - name: Audit dependencies (gagal jika ada CVE)
+              run: pip-audit -r requirements.txt
+
+            - name: Cek library usang (informasi saja)
+              run: |
+                  pip install -r requirements.txt
+                  pip list --outdated || true
+
+    # ==========================================
+    # CI JOB 4: Secret Scan (Gitleaks)
+    # ==========================================
+    gitleaks-scan:
+        name: Gitleaks Secret Scan
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+              with:
+                  # fetch-depth 0 = ambil seluruh riwayat commit agar ikut diperiksa
+                  fetch-depth: 0
+
+            - name: Run Gitleaks
+              uses: gitleaks/gitleaks-action@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # ==========================================
+    # CD STAGE: Deploy ke VM + Smoke Test
     # ==========================================
     deploy-to-vm:
         name: Build & Deploy to VirtualBox VM
-        needs: [sast-scan, pylint-check]
+        needs: [sast-scan, pylint-check, sca-scan, gitleaks-scan]
         runs-on: self-hosted
         steps:
             - name: Checkout Source Code
@@ -66,3 +110,19 @@ jobs:
                   docker rm web-flask || true
                   docker run -d -p 5000:5000 --name web-flask secure-flask-app:latest
                   docker ps | grep web-flask
+
+            - name: Smoke Test (cek aplikasi hidup)
+              run: |
+                  echo "Menunggu aplikasi siap..."
+                  for i in 1 2 3 4 5 6 7 8 9 10; do
+                      RESPONSE=$(curl -s http://localhost:5000/health || true)
+                      if [ "$RESPONSE" = "OK" ]; then
+                          echo "Smoke test BERHASIL: /health membalas OK"
+                          exit 0
+                      fi
+                      echo "Percobaan $i: belum siap, coba lagi 3 detik..."
+                      sleep 3
+                  done
+                  echo "Smoke test GAGAL: /health tidak membalas OK"
+                  docker logs web-flask
+                  exit 1
